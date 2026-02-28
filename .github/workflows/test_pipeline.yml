@@ -24,6 +24,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install pytest pytest-cov
 
+      - name: Install additional dependencies
+        run: |
+          pip install numpy pygame
+
       - name: Run tests with coverage
         run: |
           pytest --cov=model --cov-fail-under=80
