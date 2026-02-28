@@ -8,7 +8,7 @@ import os
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), '..')))
 
-
+import engine.engine
 def _make_mock_renderer():
     """Crée un mock de Renderer avec overlay surface mockée."""
     renderer = MagicMock()
