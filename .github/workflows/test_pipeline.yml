@@ -28,6 +28,11 @@ jobs:
         run: |
           pip install numpy pygame
 
+      - name: Install SDL dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsdl2-dev libfreetype6-dev
+
       - name: Run tests with coverage
         run: |
           pytest --cov=model --cov-fail-under=80
