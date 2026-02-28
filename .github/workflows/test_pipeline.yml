@@ -27,7 +27,7 @@ jobs:
       - name: Install additional dependencies
         run: |
           pip install numpy
-          pip install --only-binary=:all: pygame
+          pip install pygame==2.1.3 --extra-index-url https://www.piwheels.org/simple
 
       - name: Install SDL and related dependencies
         run: |
