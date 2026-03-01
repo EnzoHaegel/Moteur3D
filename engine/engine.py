@@ -5,10 +5,15 @@ from .math3d import Vec3, Mat4
 from .camera import Camera
 from .mesh import Mesh, OBJLoader
 from .renderer import Renderer
+from .transform import Transform
+from .scene import SceneObject
+from .physics.rigidbody import RigidBody
+from .physics.material import PhysicsMaterial
+from .physics.world import PhysicsWorld
 
 
 class Engine:
-    """Moteur 3D principal gérant la boucle de jeu, les entrées et le rendu."""
+    """Moteur 3D principal gérant la boucle de jeu, la physique, les entrées et le rendu."""
 
     def __init__(
         self,
@@ -43,8 +48,10 @@ class Engine:
         self._clock = pygame.time.Clock()
         self._running = False
 
+        self._initial_cam_pos = Vec3(0.0, 5.0, 15.0)
         self._camera = Camera(
-            position=Vec3(0.0, 5.0, 15.0),
+            position=Vec3(self._initial_cam_pos.x,
+                          self._initial_cam_pos.y, self._initial_cam_pos.z),
             aspect=width / height,
         )
         self._renderer = Renderer(width, height)
@@ -52,11 +59,16 @@ class Engine:
         self._meshes: list[Mesh] = []
         self._model_matrices: list[Mat4] = []
 
+        self._objects: list[SceneObject] = []
+
+        self._physics = PhysicsWorld()
+
         self._mouse_captured = True
         self._render_mode = 'solid'
         self._show_grid = True
         self._show_hud = True
         self._hud_font = None
+        self._last_time = None
 
         pygame.mouse.set_visible(False)
         pygame.event.set_grab(True)
@@ -70,6 +82,16 @@ class Engine:
     def renderer(self) -> Renderer:
         """Accès au renderer du moteur."""
         return self._renderer
+
+    @property
+    def objects(self) -> list:
+        """Liste des objets de la scène."""
+        return self._objects
+
+    @property
+    def physics(self) -> PhysicsWorld:
+        """Accès au monde physique."""
+        return self._physics
 
     def load_mesh(self, filepath: str, model_matrix: Mat4 = None) -> Mesh:
         """Charge un fichier OBJ et l'ajoute à la scène.
@@ -97,6 +119,114 @@ class Engine:
         self._meshes.append(mesh)
         self._model_matrices.append(
             model_matrix if model_matrix else Mat4.identity())
+
+    def add_object(
+        self,
+        name: str,
+        mesh: Mesh,
+        position: Vec3 = None,
+        rotation: Vec3 = None,
+        scale: Vec3 = None,
+        color: tuple = (0.7, 0.63, 0.55),
+        mass: float = 1.0,
+        material: PhysicsMaterial = None,
+        static: bool = False,
+    ) -> SceneObject:
+        """Crée et ajoute un objet à la scène avec physique.
+
+        Args:
+            name: Nom de l'objet.
+            mesh: Le maillage de l'objet.
+            position: Position initiale.
+            rotation: Rotation initiale en degrés (euler XYZ).
+            scale: Échelle initiale.
+            color: Couleur RGB normalisée (0.0 à 1.0).
+            mass: Masse en kg (0 = statique).
+            material: Matériau physique.
+            static: Si True, le corps est statique (masse infinie).
+
+        Returns:
+            Le SceneObject créé.
+        """
+        transform = Transform(
+            position=position, rotation=rotation, scale=scale)
+
+        body_mass = 0.0 if static else mass
+        rb = RigidBody(mass=body_mass, material=material)
+
+        obj = SceneObject(
+            mesh=mesh,
+            transform=transform,
+            color=color,
+            name=name,
+            rigidbody=rb,
+        )
+        self._objects.append(obj)
+        self._physics.register(obj)
+        return obj
+
+    def remove_object(self, obj: SceneObject):
+        """Retire un objet de la scène.
+
+        Args:
+            obj: L'objet à retirer.
+        """
+        if obj in self._objects:
+            self._objects.remove(obj)
+            self._physics.unregister(obj)
+
+    def get_object(self, name: str) -> SceneObject | None:
+        """Recherche un objet par son nom.
+
+        Args:
+            name: Nom de l'objet à rechercher.
+
+        Returns:
+            Le SceneObject trouvé, ou None si inexistant.
+        """
+        for obj in self._objects:
+            if obj.name == name:
+                return obj
+        return None
+
+    def reset(self):
+        """Réinitialise la scène : supprime tous les objets et replace la caméra."""
+        self._objects.clear()
+        self._meshes.clear()
+        self._model_matrices.clear()
+        self._physics.reset()
+        self._camera.position = Vec3(
+            self._initial_cam_pos.x,
+            self._initial_cam_pos.y,
+            self._initial_cam_pos.z,
+        )
+        self._last_time = None
+
+    def step(self, dt: float = None) -> bool:
+        """Exécute un pas de simulation : physique, événements, entrées, rendu.
+
+        Args:
+            dt: Delta time forcé en secondes. Si None, utilise le temps réel.
+
+        Returns:
+            False si le moteur doit s'arrêter (quit), True sinon.
+        """
+        if dt is None:
+            now = time.perf_counter()
+            if self._last_time is None:
+                self._last_time = now
+            dt = now - self._last_time
+            self._last_time = now
+            dt = min(dt, 0.05)
+
+        if not self._handle_events():
+            return False
+
+        self._process_input(dt)
+        self._physics.step(dt)
+        self._render()
+        self._clock.tick()
+        return True
 
     def _handle_events(self) -> bool:
         """Traite les événements Pygame. Retourne False si on doit quitter."""
@@ -162,6 +292,17 @@ class Engine:
             else:
                 self._renderer.render_wireframe(mesh, mvp)
 
+        for obj in self._objects:
+            if not obj.active:
+                continue
+            model = obj.transform.get_model_matrix()
+            mvp = vp @ model
+            if self._render_mode == 'solid':
+                self._renderer.render_mesh(
+                    obj.mesh, mvp, model, color=obj.color)
+            else:
+                self._renderer.render_wireframe(obj.mesh, mvp)
+
         self._renderer.render_crosshair()
 
         self._render_fps()
@@ -196,11 +337,16 @@ class Engine:
         font = self._hud_font
         pos = self._camera.position
 
+        total_meshes = len(self._meshes) + len(self._objects)
+        total_tris = sum(m.face_count() for m in self._meshes)
+        total_tris += sum(o.mesh.face_count()
+                          for o in self._objects if o.active)
+
         lines = [
             f"Pos: ({pos.x:.1f}, {pos.y:.1f}, {pos.z:.1f})",
             f"Yaw: {self._camera.yaw:.1f}  Pitch: {self._camera.pitch:.1f}",
             f"Mode: {self._render_mode} [F1]  Grille: {'ON' if self._show_grid else 'OFF'} [F2]",
-            f"Meshes: {len(self._meshes)}  Triangles: {sum(m.face_count() for m in self._meshes)}",
+            f"Objets: {total_meshes}  Triangles: {total_tris}",
             f"ZQSD: Bouger  Souris: Regarder  Espace/Shift: Haut/Bas  Echap: Menu",
         ]
 
@@ -220,20 +366,11 @@ class Engine:
     def run(self):
         """Lance la boucle principale du moteur."""
         self._running = True
-        last_time = time.perf_counter()
+        self._last_time = time.perf_counter()
 
         while self._running:
-            current_time = time.perf_counter()
-            dt = current_time - last_time
-            last_time = current_time
-            dt = min(dt, 0.05)
-
-            if not self._handle_events():
+            if not self.step():
                 self._running = False
                 break
-
-            self._process_input(dt)
-            self._render()
-            self._clock.tick()
 
         pygame.quit()

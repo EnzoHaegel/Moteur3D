@@ -1,3 +1,4 @@
+import engine.engine
 import pygame
 import unittest
 from unittest.mock import patch, MagicMock, PropertyMock, call
@@ -8,7 +9,7 @@ import os
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), '..')))
 
-import engine.engine
+
 def _make_mock_renderer():
     """Crée un mock de Renderer avec overlay surface mockée."""
     renderer = MagicMock()
@@ -426,6 +427,204 @@ class TestEngineRun(unittest.TestCase):
         mock_mouse.get_rel.return_value = (0, 0)
         self.engine.run()
         mock_quit.assert_called_once()
+
+
+class TestEngineObjectManagement(unittest.TestCase):
+    """Tests pour add_object, remove_object, get_object."""
+
+    def setUp(self):
+        self.engine = _create_engine_patched()
+
+    def test_add_object(self):
+        from engine.mesh import Mesh
+        verts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32)
+        faces = np.array([[0, 1, 2]], dtype=np.int32)
+        mesh = Mesh(verts, faces)
+        obj = self.engine.add_object("test", mesh)
+        self.assertEqual(len(self.engine.objects), 1)
+        self.assertEqual(obj.name, "test")
+
+    def test_add_object_with_params(self):
+        from engine.mesh import Mesh
+        from engine.math3d import Vec3
+        verts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32)
+        faces = np.array([[0, 1, 2]], dtype=np.int32)
+        mesh = Mesh(verts, faces)
+        obj = self.engine.add_object(
+            "colored", mesh,
+            position=Vec3(1.0, 2.0, 3.0),
+            color=(1.0, 0.0, 0.0),
+        )
+        self.assertEqual(obj.color, (1.0, 0.0, 0.0))
+        self.assertAlmostEqual(obj.transform.position.x, 1.0)
+
+    def test_remove_object(self):
+        from engine.mesh import Mesh
+        verts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32)
+        faces = np.array([[0, 1, 2]], dtype=np.int32)
+        mesh = Mesh(verts, faces)
+        obj = self.engine.add_object("to_remove", mesh)
+        self.engine.remove_object(obj)
+        self.assertEqual(len(self.engine.objects), 0)
+
+    def test_remove_nonexistent(self):
+        from engine.mesh import Mesh
+        from engine.scene import SceneObject
+        verts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32)
+        faces = np.array([[0, 1, 2]], dtype=np.int32)
+        mesh = Mesh(verts, faces)
+        fake = SceneObject(mesh=mesh, name="fake")
+        self.engine.remove_object(fake)
+        self.assertEqual(len(self.engine.objects), 0)
+
+    def test_get_object_found(self):
+        from engine.mesh import Mesh
+        verts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32)
+        faces = np.array([[0, 1, 2]], dtype=np.int32)
+        mesh = Mesh(verts, faces)
+        self.engine.add_object("findme", mesh)
+        found = self.engine.get_object("findme")
+        self.assertIsNotNone(found)
+        self.assertEqual(found.name, "findme")
+
+    def test_get_object_not_found(self):
+        found = self.engine.get_object("nope")
+        self.assertIsNone(found)
+
+    def test_objects_property(self):
+        self.assertIsInstance(self.engine.objects, list)
+        self.assertEqual(len(self.engine.objects), 0)
+
+
+class TestEngineReset(unittest.TestCase):
+    """Tests pour reset."""
+
+    def setUp(self):
+        self.engine = _create_engine_patched()
+
+    def test_reset_clears_objects(self):
+        from engine.mesh import Mesh
+        verts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32)
+        faces = np.array([[0, 1, 2]], dtype=np.int32)
+        mesh = Mesh(verts, faces)
+        self.engine.add_object("obj1", mesh)
+        self.engine.add_mesh(mesh)
+        self.engine.reset()
+        self.assertEqual(len(self.engine.objects), 0)
+        self.assertEqual(len(self.engine._meshes), 0)
+
+    def test_reset_resets_camera(self):
+        from engine.math3d import Vec3
+        self.engine.camera.position = Vec3(100.0, 200.0, 300.0)
+        self.engine.reset()
+        self.assertAlmostEqual(self.engine.camera.position.x, 0.0, places=3)
+        self.assertAlmostEqual(self.engine.camera.position.y, 5.0, places=3)
+        self.assertAlmostEqual(self.engine.camera.position.z, 15.0, places=3)
+
+
+class TestEngineStep(unittest.TestCase):
+    """Tests pour step."""
+
+    def setUp(self):
+        self.engine = _create_engine_patched()
+        self.engine._hud_font = MagicMock()
+        text_surf = MagicMock()
+        text_surf.get_width.return_value = 60
+        text_surf.get_height.return_value = 16
+        self.engine._hud_font.render.return_value = text_surf
+
+    @patch('engine.engine.pygame.display')
+    @patch('engine.engine.pygame.event')
+    @patch('engine.engine.pygame.key')
+    @patch('engine.engine.pygame.mouse')
+    def test_step_returns_true_normally(self, mock_mouse, mock_key,
+                                        mock_event, mock_display):
+        mock_event.get.return_value = []
+        pressed = MagicMock()
+        pressed.__getitem__ = MagicMock(return_value=False)
+        mock_key.get_pressed.return_value = pressed
+        mock_mouse.get_rel.return_value = (0, 0)
+        result = self.engine.step(dt=0.016)
+        self.assertTrue(result)
+
+    @patch('engine.engine.pygame.display')
+    @patch('engine.engine.pygame.event')
+    @patch('engine.engine.pygame.key')
+    @patch('engine.engine.pygame.mouse')
+    def test_step_returns_false_on_quit(self, mock_mouse, mock_key,
+                                        mock_event, mock_display):
+        quit_evt = MagicMock()
+        quit_evt.type = pygame.QUIT
+        mock_event.get.return_value = [quit_evt]
+        result = self.engine.step(dt=0.016)
+        self.assertFalse(result)
+
+    @patch('engine.engine.pygame.display')
+    @patch('engine.engine.pygame.event')
+    @patch('engine.engine.pygame.key')
+    @patch('engine.engine.pygame.mouse')
+    def test_step_fixed_dt(self, mock_mouse, mock_key, mock_event, mock_display):
+        mock_event.get.return_value = []
+        pressed = MagicMock()
+        pressed.__getitem__ = MagicMock(return_value=False)
+        mock_key.get_pressed.return_value = pressed
+        mock_mouse.get_rel.return_value = (0, 0)
+        result = self.engine.step(dt=1.0 / 60.0)
+        self.assertTrue(result)
+
+    @patch('engine.engine.pygame.display')
+    @patch('engine.engine.pygame.event')
+    @patch('engine.engine.pygame.key')
+    @patch('engine.engine.pygame.mouse')
+    def test_step_auto_dt(self, mock_mouse, mock_key, mock_event, mock_display):
+        mock_event.get.return_value = []
+        pressed = MagicMock()
+        pressed.__getitem__ = MagicMock(return_value=False)
+        mock_key.get_pressed.return_value = pressed
+        mock_mouse.get_rel.return_value = (0, 0)
+        result = self.engine.step()
+        self.assertTrue(result)
+
+
+class TestEngineRenderObjects(unittest.TestCase):
+    """Tests pour le rendu des SceneObjects."""
+
+    def setUp(self):
+        self.engine = _create_engine_patched()
+        self.engine._hud_font = MagicMock()
+        text_surf = MagicMock()
+        text_surf.get_width.return_value = 60
+        text_surf.get_height.return_value = 16
+        self.engine._hud_font.render.return_value = text_surf
+
+    def test_render_active_objects(self):
+        from engine.mesh import Mesh
+        verts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32)
+        faces = np.array([[0, 1, 2]], dtype=np.int32)
+        mesh = Mesh(verts, faces)
+        self.engine.add_object("obj", mesh, color=(1.0, 0.0, 0.0))
+        self.engine._render_mode = 'solid'
+        self.engine._show_grid = False
+        self.engine._show_hud = False
+        with patch('engine.engine.pygame.display'):
+            self.engine._render()
+        self.engine.renderer.render_mesh.assert_called()
+
+    def test_inactive_objects_not_rendered(self):
+        from engine.mesh import Mesh
+        verts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32)
+        faces = np.array([[0, 1, 2]], dtype=np.int32)
+        mesh = Mesh(verts, faces)
+        obj = self.engine.add_object("hidden", mesh)
+        obj.active = False
+        self.engine._meshes = []
+        self.engine._model_matrices = []
+        self.engine._render_mode = 'solid'
+        self.engine._show_grid = False
+        self.engine._show_hud = False
+        with patch('engine.engine.pygame.display'):
+            self.engine._render()
+        self.engine.renderer.render_mesh.assert_not_called()
 
 
 if __name__ == '__main__':

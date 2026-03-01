@@ -336,13 +336,14 @@ class Renderer:
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         self._overlay_surface.fill((0, 0, 0, 0))
 
-    def render_mesh(self, mesh: Mesh, mvp: Mat4, model: Mat4 = None):
+    def render_mesh(self, mesh: Mesh, mvp: Mat4, model: Mat4 = None, color=None):
         """Rend un maillage avec éclairage directionnel via le GPU.
 
         Args:
             mesh: Le maillage à rendre.
             mvp: Matrice Model-View-Projection combinée.
             model: Matrice modèle pour transformer les normales (optionnel).
+            color: Couleur RGB normalisée (tuple de 3 floats, optionnel).
         """
         gpu = self._get_gpu(mesh)
         glUseProgram(self._mesh_prog)
@@ -351,7 +352,11 @@ class Renderer:
         glUniformMatrix4fv(self._mu['model'], 1, GL_TRUE, m)
         glUniform3fv(self._mu['lightDir'], 1, self._light_dir)
         glUniform1f(self._mu['ambient'], self._ambient)
-        glUniform3fv(self._mu['baseColor'], 1, self._base_color)
+        if color is not None:
+            c = np.array(color, dtype=np.float32)
+            glUniform3fv(self._mu['baseColor'], 1, c)
+        else:
+            glUniform3fv(self._mu['baseColor'], 1, self._base_color)
         glBindVertexArray(gpu.vao)
         glDrawElements(GL_TRIANGLES, gpu.count, GL_UNSIGNED_INT, None)
         glBindVertexArray(0)
