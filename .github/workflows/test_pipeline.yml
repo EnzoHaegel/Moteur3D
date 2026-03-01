@@ -35,7 +35,7 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          pytest --cov=model --cov-fail-under=80
+          pytest --cov=. --cov-fail-under=80
 
       - name: Upload coverage report
         if: always()
