@@ -72,7 +72,8 @@ class TestRigidBodyForces(unittest.TestCase):
         rb = RigidBody()
         rb.add_torque(Vec3(5.0, 0.0, 0.0))
         rb.integrate_forces(1.0)
-        self.assertAlmostEqual(rb.angular_velocity.x, 5.0, places=3)
+        expected = 5.0 * rb.inv_inertia
+        self.assertAlmostEqual(rb.angular_velocity.x, expected, places=3)
 
     def test_clear_forces(self):
         """clear_forces remet à zéro."""
@@ -102,7 +103,8 @@ class TestRigidBodyImpulse(unittest.TestCase):
         """L'impulsion angulaire modifie la vélocité angulaire."""
         rb = RigidBody(mass=1.0)
         rb.add_angular_impulse(Vec3(0.0, 3.0, 0.0))
-        self.assertAlmostEqual(rb.angular_velocity.y, 3.0, places=3)
+        expected = 3.0 * rb.inv_inertia
+        self.assertAlmostEqual(rb.angular_velocity.y, expected, places=3)
 
 
 class TestRigidBodyIntegration(unittest.TestCase):

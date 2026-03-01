@@ -187,6 +187,16 @@ while running:
 engine.reset()
 ```
 
+## Examples
+
+Des scripts de démonstration sont disponibles dans le dossier `examples/` :
+
+```bash
+python examples/falling_cubes.py     # Cubes avec différents matériaux
+python examples/bipedal_robot.py     # Robot bipède articulé avec moteurs
+python examples/swimming.py          # Flottabilité : bois, métal, glace dans l'eau
+```
+
 ## Lancer les tests
 
 ```bash

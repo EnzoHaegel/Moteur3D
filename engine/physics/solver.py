@@ -45,12 +45,12 @@ def detect_contact(obj_a, obj_b) -> Contact | None:
     if not aabb_a.intersects(aabb_b):
         return None
 
-    overlap_x = min(aabb_a.max_point.x, aabb_b.max_point.x) - \
-        max(aabb_a.min_point.x, aabb_b.min_point.x)
-    overlap_y = min(aabb_a.max_point.y, aabb_b.max_point.y) - \
-        max(aabb_a.min_point.y, aabb_b.min_point.y)
-    overlap_z = min(aabb_a.max_point.z, aabb_b.max_point.z) - \
-        max(aabb_a.min_point.z, aabb_b.min_point.z)
+    overlap_x = min(aabb_a.max_point.x - aabb_b.min_point.x,
+                    aabb_b.max_point.x - aabb_a.min_point.x)
+    overlap_y = min(aabb_a.max_point.y - aabb_b.min_point.y,
+                    aabb_b.max_point.y - aabb_a.min_point.y)
+    overlap_z = min(aabb_a.max_point.z - aabb_b.min_point.z,
+                    aabb_b.max_point.z - aabb_a.min_point.z)
 
     center_a = aabb_a.center()
     center_b = aabb_b.center()

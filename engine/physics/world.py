@@ -211,6 +211,13 @@ class PhysicsWorld:
         Returns:
             Liste des contacts détectés.
         """
+        jointed_pairs = set()
+        for joint in self._joints:
+            if joint.active:
+                a_id = id(joint.obj_a)
+                b_id = id(joint.obj_b)
+                jointed_pairs.add((min(a_id, b_id), max(a_id, b_id)))
+
         contacts = []
         active = [o for o in self._objects if o.active and o.rigidbody is not None]
         n = len(active)
@@ -221,6 +228,10 @@ class PhysicsWorld:
                 obj_b = active[j]
 
                 if obj_a.rigidbody.is_static and obj_b.rigidbody.is_static:
+                    continue
+
+                pair_key = (min(id(obj_a), id(obj_b)), max(id(obj_a), id(obj_b)))
+                if pair_key in jointed_pairs:
                     continue
 
                 contact = detect_contact(obj_a, obj_b)

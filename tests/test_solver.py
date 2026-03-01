@@ -71,6 +71,53 @@ class TestDetectContact(unittest.TestCase):
         self.assertIsNotNone(contact)
         self.assertAlmostEqual(abs(contact.normal.y), 1.0, places=3)
 
+    def test_horizontal_x_collision(self):
+        """La normale pointe sur l'axe X pour collision latérale X."""
+        a = _make_obj(Vec3(0.0, 0.0, 0.0))
+        b = _make_obj(Vec3(0.5, 0.0, 0.0))
+        # Ensure overlap on X is strictly smaller than Y and Z
+        # a: X (-0.5 to 0.5), b: X (0.0 to 1.0), Overlap X: 0.5
+        # a: Y (-0.5 to 0.5), b: Y (-0.5 to 0.5), Overlap Y: 1.0
+        # a: Z (-0.5 to 0.5), b: Z (-0.5 to 0.5), Overlap Z: 1.0
+        contact = detect_contact(a, b)
+        self.assertIsNotNone(contact)
+        self.assertAlmostEqual(abs(contact.normal.x), 1.0, places=3)
+        self.assertEqual(contact.normal.y, 0.0)
+        self.assertEqual(contact.normal.z, 0.0)
+        self.assertAlmostEqual(contact.penetration, 0.5, places=3)
+
+    def test_flat_plane_collision(self):
+        """Un objet traversant un plan plat (sans épaisseur) génère un contact valide (épaisseur 0)."""
+        from engine.primitives import Primitives
+        plane_mesh = Primitives.plane(width=10, depth=10)
+        plane_obj = SceneObject(mesh=plane_mesh, transform=Transform(position=Vec3(0, 0, 0)))
+        
+        # Objet descendant à moitié dans le plan
+        cube_obj = _make_obj(Vec3(0, 0.0, 0.0)) # Cube fait 1.0 de haut, de -0.5 à +0.5
+        cube_obj.rigidbody.velocity = Vec3(0, -5.0, 0)
+        
+        contact = detect_contact(plane_obj, cube_obj)
+        self.assertIsNotNone(contact)
+        self.assertGreater(contact.penetration, 0.0)
+        self.assertAlmostEqual(contact.penetration, 0.5, places=3)
+        self.assertAlmostEqual(contact.normal.y, -1.0, places=3) # Normale face vers le bas car on descend ? Non, plan statique
+        
+    def test_thin_separation(self):
+        """Tests that penetration calculation uses minimum translation distance, not overlap size."""
+        # Sol mince (H=0.0) de y=0.0 à y=0.0
+        plane_mesh = Mesh(np.array([[-1, 0, -1], [1, 0, -1], [1, 0, 1], [-1, 0, 1]], dtype=np.float32), 
+                          np.array([[0, 2, 1], [0, 3, 2]], dtype=np.int32))
+        plane_obj = SceneObject(mesh=plane_mesh, transform=Transform(position=Vec3(0, 0, 0)))
+        
+        # Cube (H=1.0) encastré de y=-0.2 à y=0.8
+        cube = _make_obj(Vec3(0, 0.3, 0.0))
+        
+        contact = detect_contact(plane_obj, cube)
+        self.assertIsNotNone(contact)
+        # Size of intersection on Y is 0.0 (plane max 0.0 - plane min 0.0) 
+        # But penetration should be 0.2 (dist to separate)
+        self.assertAlmostEqual(contact.penetration, 0.2, places=3)
+
 
 class TestResolveCollision(unittest.TestCase):
     """Tests pour resolve_collision."""
@@ -105,6 +152,34 @@ class TestResolveCollision(unittest.TestCase):
         contact = detect_contact(a, b)
         if contact is not None:
             resolve_collision(contact)
+            
+    def test_zero_inv_mass_sum(self):
+        """Deux objets avec inv_mass=0 renvoient early (inv_mass_sum==0)."""
+        a = _make_obj(Vec3(0.0, 0.0, 0.0), mass=1.0)
+        b = _make_obj(Vec3(0.5, 0.0, 0.0), mass=1.0)
+        
+        # Pour forcer inv_mass_sum == 0.0 sans déclencher is_static && is_static
+        # (car is_static = mass == 0.0)
+        a.rigidbody._inv_mass = 0.0
+        b.rigidbody._inv_mass = 0.0
+        
+        contact = detect_contact(a, b)
+        if contact is not None:
+            resolve_collision(contact)
+            
+    def test_separating_velocity(self):
+        """Objets qui s'éloignent ne provoquent qu'une correction de position, pas d'impulsion."""
+        a = _make_obj(Vec3(0.0, 0.0, 0.0))
+        b = _make_obj(Vec3(0.5, 0.0, 0.0))
+        # B moves away from A
+        a.rigidbody.velocity = Vec3(-10.0, 0.0, 0.0)
+        b.rigidbody.velocity = Vec3(10.0, 0.0, 0.0)
+        contact = detect_contact(a, b)
+        self.assertIsNotNone(contact)
+        resolve_collision(contact)
+        # Velocity should not change if they separate
+        self.assertEqual(a.rigidbody.velocity.x, -10.0)
+        self.assertEqual(b.rigidbody.velocity.x, 10.0)
 
     def test_rubber_bounces_more(self):
         """Le caoutchouc rebondit plus que la pierre."""
@@ -129,6 +204,39 @@ class TestResolveCollision(unittest.TestCase):
         self.assertGreater(rubber.rigidbody.velocity.y,
                            stone.rigidbody.velocity.y)
 
+    def test_horizontal_z_collision(self):
+        """La normale pointe sur l'axe Z pour collision horizontale en profondeur."""
+        a = _make_obj(Vec3(0.0, 0.0, 0.0))
+        b = _make_obj(Vec3(0.0, 0.0, 0.5))
+        contact = detect_contact(a, b)
+        self.assertIsNotNone(contact)
+        self.assertAlmostEqual(abs(contact.normal.z), 1.0, places=3)
+        self.assertEqual(contact.normal.x, 0.0)
+        self.assertEqual(contact.normal.y, 0.0)
+        
+    def test_friction_tangent_impulse(self):
+        """Vérifie que la friction ralentit la vitesse tangentielle (glissement)."""
+        # Un sol avec beaucoup de friction
+        floor_mat = PhysicsMaterial(friction=1.0)
+        floor = _make_obj(Vec3(0.0, -0.5, 0.0), mass=0.0, mat=floor_mat)
+        
+        # Un bloc qui glisse avec friction
+        block_mat = PhysicsMaterial(friction=1.0)
+        block = _make_obj(Vec3(0.0, 0.49, 0.0), mass=1.0, mat=block_mat)
+        
+        # Le bloc tombe légèrement (pour la normale) ET avance sur le côté X (tangentiel)
+        block.rigidbody.velocity = Vec3(10.0, -2.0, 0.0)
+        
+        contact = detect_contact(floor, block)
+        self.assertIsNotNone(contact)
+        
+        resolve_collision(contact)
+        
+        # Vitesse tangentielle X devrait avoir diminuée à cause de la friction
+        self.assertLess(block.rigidbody.velocity.x, 10.0)
+        # La gravité/rebond aura affecté Y
+        self.assertGreater(block.rigidbody.velocity.y, -2.0)
+
     def test_no_rigidbody_safe(self):
         """Pas de crash si un objet n'a pas de rigidbody."""
         mesh = _make_cube_mesh()
@@ -137,6 +245,65 @@ class TestResolveCollision(unittest.TestCase):
         contact = detect_contact(a, b)
         if contact is not None:
             resolve_collision(contact)
+            
+        a2 = _make_obj(Vec3(0.0, 0.0, 0.0))
+        b2 = SceneObject(mesh=mesh, transform=Transform(position=Vec3(0.5, 0, 0)))
+        contact2 = detect_contact(a2, b2)
+        if contact2 is not None:
+            resolve_collision(contact2)
+
+    def test_zero_tangent_friction(self):
+        """Aucune erreur si la vélocité tangentielle est très petite (chute verticale pure)."""
+        floor = _make_obj(Vec3(0.0, -0.5, 0.0), mass=0.0)
+        block = _make_obj(Vec3(0.0, 0.49, 0.0), mass=1.0)
+        block.rigidbody.velocity = Vec3(0.0, -10.0, 0.0)  # Perfectly straight down
+        
+        contact = detect_contact(floor, block)
+        self.assertIsNotNone(contact)
+        resolve_collision(contact)
+        # Should not crash, lateral velocity should remain 0
+        self.assertEqual(block.rigidbody.velocity.x, 0.0)
+        self.assertEqual(block.rigidbody.velocity.z, 0.0)
+        
+    def test_clamped_friction(self):
+        """Vérifie le block 'else' où la friction est clampée par -normal_impulse * mu."""
+        # Un sol normal
+        floor_mat = PhysicsMaterial(friction=0.1) # low friction
+        floor = _make_obj(Vec3(0.0, -0.5, 0.0), mass=0.0, mat=floor_mat)
+        
+        # Un bloc très rapide (fort jt mais clampé par mu bas)
+        block_mat = PhysicsMaterial(friction=0.1)
+        block = _make_obj(Vec3(0.0, 0.49, 0.0), mass=1.0, mat=block_mat)
+        block.rigidbody.velocity = Vec3(50.0, -1.0, 0.0) # Vitesse extreme latérale
+        
+        contact = detect_contact(floor, block)
+        self.assertIsNotNone(contact)
+        resolve_collision(contact)
+        # Should have applied reduced friction
+        self.assertLess(block.rigidbody.velocity.x, 50.0)
+        self.assertGreater(block.rigidbody.velocity.x, 0.0)  # Still mostly 50 since friction is low
+
+    def test_correct_position_static_a(self):
+        """Vérifie que la position de A n'est pas modifiée si A est statique (B dynamique)."""
+        a = _make_obj(Vec3(0.0, 0.0, 0.0), mass=0.0)  # A est statique
+        b = _make_obj(Vec3(0.5, 0.0, 0.0), mass=1.0)  # B est dynamique
+        b.rigidbody.velocity = Vec3(-10.0, 0.0, 0.0)
+        contact = detect_contact(a, b)
+        self.assertIsNotNone(contact)
+        resolve_collision(contact)
+        self.assertEqual(a.transform.position.x, 0.0)  # A ne bouge pas
+        self.assertGreater(b.transform.position.x, 0.5)  # B est repoussé
+
+    def test_correct_position_static_b(self):
+        """Vérifie que la position de B n'est pas modifiée si B est statique (A dynamique)."""
+        a = _make_obj(Vec3(0.0, 0.0, 0.0), mass=1.0)  # A est dynamique
+        a.rigidbody.velocity = Vec3(10.0, 0.0, 0.0)
+        b = _make_obj(Vec3(0.5, 0.0, 0.0), mass=0.0)  # B est statique
+        contact = detect_contact(a, b)
+        self.assertIsNotNone(contact)
+        resolve_collision(contact)
+        self.assertLess(a.transform.position.x, 0.0)  # A est repoussé
+        self.assertEqual(b.transform.position.x, 0.5)  # B ne bouge pas
 
 
 class TestContactInfo(unittest.TestCase):

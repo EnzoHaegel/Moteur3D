@@ -7,7 +7,7 @@ class RigidBody:
     """Corps rigide avec masse, vélocité et accumulation de forces."""
 
     __slots__ = (
-        'mass', '_inv_mass',
+        'mass', '_inv_mass', '_inv_inertia',
         'velocity', 'angular_velocity',
         '_force', '_torque',
         'is_kinematic', 'material',
@@ -29,6 +29,11 @@ class RigidBody:
         """
         self.mass = mass
         self._inv_mass = 0.0 if mass <= 0.0 or is_kinematic else 1.0 / mass
+        if mass > 0.0 and not is_kinematic:
+            inertia = 0.4 * mass * 0.3 * 0.3
+            self._inv_inertia = 1.0 / inertia
+        else:
+            self._inv_inertia = 0.0
         self.velocity = Vec3(0.0, 0.0, 0.0)
         self.angular_velocity = Vec3(0.0, 0.0, 0.0)
         self._force = Vec3(0.0, 0.0, 0.0)
@@ -41,6 +46,11 @@ class RigidBody:
     def inv_mass(self) -> float:
         """Inverse de la masse (0 pour les corps statiques)."""
         return self._inv_mass
+
+    @property
+    def inv_inertia(self) -> float:
+        """Inverse du moment d'inertie (0 pour les corps statiques)."""
+        return self._inv_inertia
 
     @property
     def is_static(self) -> bool:
@@ -85,7 +95,7 @@ class RigidBody:
         """
         if self.is_static:
             return
-        self.angular_velocity = self.angular_velocity + impulse * self._inv_mass
+        self.angular_velocity = self.angular_velocity + impulse * self._inv_inertia
 
     def integrate_forces(self, dt: float):
         """Intègre les forces accumulées en vélocité (semi-implicite Euler).
@@ -98,7 +108,7 @@ class RigidBody:
         acceleration = self._force * self._inv_mass
         self.velocity = self.velocity + acceleration * dt
 
-        angular_accel = self._torque * self._inv_mass
+        angular_accel = self._torque * self._inv_inertia
         self.angular_velocity = self.angular_velocity + angular_accel * dt
 
     def integrate_velocity(self, position: Vec3, rotation: Vec3, dt: float) -> tuple:
